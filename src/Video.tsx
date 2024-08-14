@@ -8,7 +8,13 @@ import React, {
 } from 'react';
 import type {ElementRef} from 'react';
 import {View, StyleSheet, Image, Platform, processColor} from 'react-native';
-import type {StyleProp, ImageStyle, NativeSyntheticEvent} from 'react-native';
+import type {
+  StyleProp,
+  ImageStyle,
+  NativeSyntheticEvent,
+  ViewStyle,
+  ImageResizeMode,
+} from 'react-native';
 
 import NativeVideoComponent from './specs/VideoNativeComponent';
 import type {
@@ -57,6 +63,8 @@ export interface VideoRef {
   ) => void;
   setVolume: (volume: number) => void;
   setFullScreen: (fullScreen: boolean) => void;
+  enterPictureInPicture: () => void;
+  exitPictureInPicture: () => void;
   save: (options: object) => Promise<VideoSaveData> | void;
   getCurrentPosition: () => Promise<number>;
 }
@@ -67,8 +75,9 @@ const Video = forwardRef<VideoRef, ReactVideoProps>(
       source,
       style,
       resizeMode,
-      posterResizeMode,
       poster,
+      posterResizeMode,
+      renderLoader,
       drm,
       textTracks,
       selectedVideoTrack,
@@ -113,24 +122,27 @@ const Video = forwardRef<VideoRef, ReactVideoProps>(
     ref,
   ) => {
     const nativeRef = useRef<ElementRef<typeof NativeVideoComponent>>(null);
-    const [showPoster, setShowPoster] = useState(!!poster);
+
+    const isPosterDeprecated = typeof poster === 'string';
+
+    const hasPoster = useMemo(() => {
+      if (renderLoader) {
+        return true;
+      }
+
+      if (isPosterDeprecated) {
+        return !!poster;
+      }
+
+      return !!poster?.source;
+    }, [isPosterDeprecated, poster, renderLoader]);
+
+    const [showPoster, setShowPoster] = useState(hasPoster);
+
     const [
       _restoreUserInterfaceForPIPStopCompletionHandler,
       setRestoreUserInterfaceForPIPStopCompletionHandler,
     ] = useState<boolean | undefined>();
-
-    const hasPoster = !!poster;
-
-    const posterStyle = useMemo<StyleProp<ImageStyle>>(
-      () => ({
-        ...StyleSheet.absoluteFillObject,
-        resizeMode:
-          posterResizeMode && posterResizeMode !== 'none'
-            ? posterResizeMode
-            : 'contain',
-      }),
-      [posterResizeMode],
-    );
 
     const src = useMemo<VideoSrc | undefined>(() => {
       if (!source) {
@@ -314,6 +326,40 @@ const Video = forwardRef<VideoRef, ReactVideoProps>(
       () => setFullScreen(false),
       [setFullScreen],
     );
+
+    const enterPictureInPicture = useCallback(async () => {
+      if (!nativeRef.current) {
+        console.warn('Video Component is not mounted');
+        return;
+      }
+
+      const _enterPictureInPicture = () => {
+        NativeVideoManager.enterPictureInPictureCmd(getReactTag(nativeRef));
+      };
+
+      Platform.select({
+        ios: _enterPictureInPicture,
+        android: _enterPictureInPicture,
+        default: () => {},
+      })();
+    }, []);
+
+    const exitPictureInPicture = useCallback(async () => {
+      if (!nativeRef.current) {
+        console.warn('Video Component is not mounted');
+        return;
+      }
+
+      const _exitPictureInPicture = () => {
+        NativeVideoManager.exitPictureInPictureCmd(getReactTag(nativeRef));
+      };
+
+      Platform.select({
+        ios: _exitPictureInPicture,
+        android: _exitPictureInPicture,
+        default: () => {},
+      })();
+    }, []);
 
     const save = useCallback((options: object) => {
       // VideoManager.save can be null on android & windows
@@ -552,6 +598,8 @@ const Video = forwardRef<VideoRef, ReactVideoProps>(
         setVolume,
         getCurrentPosition,
         setFullScreen,
+        enterPictureInPicture,
+        exitPictureInPicture,
       }),
       [
         seek,
@@ -564,6 +612,8 @@ const Video = forwardRef<VideoRef, ReactVideoProps>(
         setVolume,
         getCurrentPosition,
         setFullScreen,
+        enterPictureInPicture,
+        exitPictureInPicture,
       ],
     );
 
@@ -598,13 +648,78 @@ const Video = forwardRef<VideoRef, ReactVideoProps>(
         : ViewType.SURFACE;
     }, [drm, useSecureView, useTextureView, viewType]);
 
+    const _renderPoster = useCallback(() => {
+      if (!hasPoster || !showPoster) {
+        return null;
+      }
+
+      // poster resize mode
+      let _posterResizeMode: ImageResizeMode = 'contain';
+
+      if (!isPosterDeprecated && poster?.resizeMode) {
+        _posterResizeMode = poster.resizeMode;
+      } else if (posterResizeMode && posterResizeMode !== 'none') {
+        _posterResizeMode = posterResizeMode;
+      }
+
+      // poster style
+      const baseStyle: StyleProp<ImageStyle> = {
+        ...StyleSheet.absoluteFillObject,
+        resizeMode: _posterResizeMode,
+      };
+
+      let posterStyle: StyleProp<ImageStyle> = baseStyle;
+
+      if (!isPosterDeprecated && poster?.style) {
+        const styles = Array.isArray(poster.style)
+          ? poster.style
+          : [poster.style];
+        posterStyle = [baseStyle, ...styles];
+      }
+
+      // render poster
+      if (renderLoader && (poster || posterResizeMode)) {
+        console.warn(
+          'You provided both `renderLoader` and `poster` or `posterResizeMode` props. `renderLoader` will be used.',
+        );
+      }
+
+      // render loader
+      if (renderLoader) {
+        return <View style={StyleSheet.absoluteFill}>{renderLoader}</View>;
+      }
+
+      return (
+        <Image
+          {...(isPosterDeprecated ? {} : poster)}
+          source={isPosterDeprecated ? {uri: poster} : poster?.source}
+          style={posterStyle}
+        />
+      );
+    }, [
+      hasPoster,
+      isPosterDeprecated,
+      poster,
+      posterResizeMode,
+      renderLoader,
+      showPoster,
+    ]);
+
+    const _style: StyleProp<ViewStyle> = useMemo(
+      () => ({
+        ...StyleSheet.absoluteFillObject,
+        ...(showPoster ? {display: 'none'} : {}),
+      }),
+      [showPoster],
+    );
+
     return (
       <View style={style}>
         <NativeVideoComponent
           ref={nativeRef}
           {...rest}
           src={src}
-          style={StyleSheet.absoluteFill}
+          style={_style}
           resizeMode={resizeMode}
           restoreUserInterfaceForPIPStopCompletionHandler={
             _restoreUserInterfaceForPIPStopCompletionHandler
@@ -679,9 +794,7 @@ const Video = forwardRef<VideoRef, ReactVideoProps>(
           }
           viewType={_viewType}
         />
-        {hasPoster && showPoster ? (
-          <Image style={posterStyle} source={{uri: poster}} />
-        ) : null}
+        {_renderPoster()}
       </View>
     );
   },

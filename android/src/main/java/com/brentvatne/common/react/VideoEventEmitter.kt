@@ -42,13 +42,14 @@ enum class EventTypes(val eventName: String) {
 
     EVENT_TEXT_TRACK_DATA_CHANGED("onTextTrackDataChanged"),
     EVENT_VIDEO_TRACKS("onVideoTracks"),
-    EVENT_ON_RECEIVE_AD_EVENT("onReceiveAdEvent");
+    EVENT_ON_RECEIVE_AD_EVENT("onReceiveAdEvent"),
+    EVENT_PICTURE_IN_PICTURE_STATUS_CHANGED("onPictureInPictureStatusChanged");
 
     companion object {
         fun toMap() =
             mutableMapOf<String, Any>().apply {
                 EventTypes.values().toList().forEach { eventType ->
-                    put("top${eventType.eventName.removePrefix("on")}", mapOf("registrationName" to eventType.eventName))
+                    put("top${eventType.eventName.removePrefix("on")}", hashMapOf("registrationName" to eventType.eventName))
                 }
             }
     }
@@ -90,6 +91,7 @@ class VideoEventEmitter {
     lateinit var onVideoTracks: (videoTracks: ArrayList<VideoTrack>?) -> Unit
     lateinit var onTextTrackDataChanged: (textTrackData: String) -> Unit
     lateinit var onReceiveAdEvent: (adEvent: String, adData: Map<String?, String?>?) -> Unit
+    lateinit var onPictureInPictureStatusChanged: (isActive: Boolean) -> Unit
 
     fun addEventEmitters(reactContext: ThemedReactContext, view: ReactExoplayerView) {
         val dispatcher = UIManagerHelper.getEventDispatcherForReactTag(reactContext, view.id)
@@ -272,6 +274,11 @@ class VideoEventEmitter {
                             }
                         }
                     )
+                }
+            }
+            onPictureInPictureStatusChanged = { isActive ->
+                event.dispatch(EventTypes.EVENT_PICTURE_IN_PICTURE_STATUS_CHANGED) {
+                    putBoolean("isActive", isActive)
                 }
             }
         }
